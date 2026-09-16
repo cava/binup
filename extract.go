@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -133,6 +134,46 @@ func matchesGlob(name, pattern string) bool {
 	return matched
 }
 
+// docNames is the exact (case-insensitive) set of archive member names
+// treated as non-binary docs, so that when an archive was built without
+// preserving the executable bit (e.g. some zip files produced on non-Unix
+// toolchains) the sole remaining candidate can still be picked.
+var docNames = []string{
+	"readme", "readme.md",
+	"license", "license.txt", "license.md",
+	"changelog", "changelog.md",
+}
+
+func looksLikeDoc(name string) bool {
+	base := strings.ToLower(filepath.Base(name))
+	return slices.Contains(docNames, base)
+}
+
+// pickSingle filters members by keep and returns them if exactly one
+// remains; otherwise it returns an error built from archiveName/reason,
+// listing the ambiguous candidates (or noting there were none).
+func pickSingle[T any](members []T, name func(T) string, keep func(T) bool, archiveName, reason string) ([]T, error) {
+	var kept []T
+	var names []string
+	for _, m := range members {
+		if keep(m) {
+			kept = append(kept, m)
+			names = append(names, name(m))
+		}
+	}
+	switch len(kept) {
+	case 0:
+		return nil, fmt.Errorf("%s: no member %s; pass --file GLOB to choose", archiveName, reason)
+	case 1:
+		return kept, nil
+	default:
+		// Return kept alongside the error so callers can still inspect how
+		// many (and which) members matched.
+		return kept, fmt.Errorf("%s: %d members %s (%s); pass --file GLOB to choose one",
+			archiveName, len(kept), reason, strings.Join(names, ", "))
+	}
+}
+
 func selectExecs[T any](members []T, fileGlob string, name func(T) string, isExec func(T) bool, archiveName string) ([]T, error) {
 	if fileGlob != "" && fileGlob != "*" {
 		var out []T
@@ -143,22 +184,23 @@ func selectExecs[T any](members []T, fileGlob string, name func(T) string, isExe
 		}
 		return out, nil
 	}
-	var execs []T
-	var names []string
-	for _, m := range members {
-		if isExec(m) {
-			execs = append(execs, m)
-			names = append(names, name(m))
-		}
+	execs, execErr := pickSingle(members, name, isExec, archiveName, "with the executable bit set")
+	if execErr == nil {
+		return execs, nil
 	}
-	if len(execs) != 1 {
-		if len(execs) == 0 {
-			return nil, fmt.Errorf("%s: no member with the executable bit set; pass --file GLOB to choose", archiveName)
-		}
-		return nil, fmt.Errorf("%s: %d members with the executable bit set (%s); pass --file GLOB to choose one",
-			archiveName, len(execs), strings.Join(names, ", "))
+	if len(execs) > 1 {
+		// Multiple genuine executables: ambiguous regardless of doc-filtering.
+		return nil, execErr
 	}
-	return execs, nil
+	// No member has the executable bit set at all (e.g. some cross-built
+	// zips don't preserve Unix permissions); fall back to the sole member
+	// that isn't an obvious doc/license/config file.
+	nonDocs, err := pickSingle(members, name, func(m T) bool { return !looksLikeDoc(name(m)) },
+		archiveName, "that aren't a common doc/config file (and none has the executable bit set)")
+	if err != nil {
+		return nil, execErr
+	}
+	return nonDocs, nil
 }
 
 func extractTar(path, outDir, fileGlob string, gzipped, dryRun bool) ([]string, error) {
