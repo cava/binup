@@ -286,6 +286,19 @@ func stripGitHubURL(t string) string {
 	return t
 }
 
+// normalizeRepoID maps a GitHub URL or owner/repo form to the canonical
+// manifest key used by install (owner/repo). Unrecognized values (e.g. local
+// file paths) are returned unchanged.
+func normalizeRepoID(target string) string {
+	if isGitHubRepoURL(target) {
+		return stripGitHubURL(target)
+	}
+	if owner, repo, err := splitRepo(target); err == nil {
+		return owner + "/" + repo
+	}
+	return target
+}
+
 func runUpgrade(cf cliFlags, args []string, minAge time.Duration, maxDownloadSize int64) error {
 	m, err := loadManifest()
 	if err != nil {
@@ -297,6 +310,9 @@ func runUpgrade(cf cliFlags, args []string, minAge time.Duration, maxDownloadSiz
 	}
 	ids := m.keys()
 	if target != "" && target != "all" {
+		if _, ok := m.Tools[target]; !ok {
+			target = normalizeRepoID(target)
+		}
 		ids = []string{target}
 	}
 	if len(ids) == 0 {
@@ -411,7 +427,11 @@ func runRemove(args []string) error {
 	}
 	rec, ok := m.Tools[id]
 	if !ok {
-		return fmt.Errorf("not tracked: %s", id)
+		id = normalizeRepoID(id)
+		rec, ok = m.Tools[id]
+	}
+	if !ok {
+		return fmt.Errorf("not tracked: %s", args[0])
 	}
 	for _, f := range rec.Files {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
