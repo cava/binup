@@ -26,12 +26,10 @@ jobs:
         set -euo pipefail
         version="${GITHUB_REF_NAME}"
         mkdir -p dist
-        for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+        for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
           os="${target%/*}"
           arch="${target#*/}"
-          ext=""
-          [ "${os}" = "windows" ] && ext=".exe"
-          name="binup-${os}-${arch}${ext}"
+          name="binup-${os}-${arch}"
           echo "building ${name} (${version})"
           CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" \
             go build -trimpath -ldflags "-s -w -X main.buildVersion=${version}" -o "dist/${name}" .
