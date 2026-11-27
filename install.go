@@ -11,22 +11,23 @@ import (
 )
 
 type installOptions struct {
-	Repo         string
-	File         string
-	Tag          string
-	To           string
-	System       string
-	FileGlob     string
-	AssetFilters []string
-	DownloadOnly bool
-	UpgradeOnly  bool
-	ShowHash     bool
-	VerifySHA256 string
-	Source       bool
-	PreRelease   bool
-	All          bool
-	Yes          bool
-	MinAge       time.Duration
+	Repo            string
+	File            string
+	Tag             string
+	To              string
+	System          string
+	FileGlob        string
+	AssetFilters    []string
+	DownloadOnly    bool
+	UpgradeOnly     bool
+	ShowHash        bool
+	VerifySHA256    string
+	Source          bool
+	PreRelease      bool
+	All             bool
+	Yes             bool
+	MinAge          time.Duration
+	MaxDownloadSize int64
 }
 
 // errAborted signals the user declined an install confirmation prompt; it is
@@ -183,7 +184,7 @@ func installFromRepo(opts installOptions, gh *GitHubClient, out *installResult) 
 		}
 	}
 	out.Asset = asset.Name
-	tmpPath, sha, md5sum, err := download(asset.BrowserDownloadURL, gh.token)
+	tmpPath, sha, md5sum, err := download(asset.BrowserDownloadURL, gh.token, opts.MaxDownloadSize)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +269,7 @@ func installAllAssets(rel *Release, opts installOptions, out *installResult, gh 
 		if !osMatches(a.Name, sys.os) || !archMatches(a.Name, sys.arch) {
 			continue
 		}
-		tmp, sha, md5sum, err := download(a.BrowserDownloadURL, gh.token)
+		tmp, sha, md5sum, err := download(a.BrowserDownloadURL, gh.token, opts.MaxDownloadSize)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: %s: %v\n", a.Name, err)
 			continue

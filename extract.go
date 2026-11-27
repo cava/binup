@@ -15,12 +15,90 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const maxChecksumBody = 256 << 10
-const maxDownloadSize = 25 << 20
+
+// defaultMaxDownloadSize caps a single download unless overridden with
+// --max-download-size.
+const defaultMaxDownloadSize = 25 << 20
+
+// parseSize parses a human-readable byte size such as "50MB", "1GiB", or a
+// bare number of bytes. Suffixes are case-insensitive and accept both decimal
+// (KB, MB, GB) and binary (KiB, MiB, GiB) units.
+func parseSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	i := 0
+	for i < len(s) && (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	numStr := s[:i]
+	if numStr == "" {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	num, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	var mult float64
+	switch strings.ToLower(strings.TrimSpace(s[i:])) {
+	case "", "b":
+		mult = 1
+	case "k", "kb":
+		mult = 1e3
+	case "kib":
+		mult = 1 << 10
+	case "m", "mb":
+		mult = 1e6
+	case "mib":
+		mult = 1 << 20
+	case "g", "gb":
+		mult = 1e9
+	case "gib":
+		mult = 1 << 30
+	case "t", "tb":
+		mult = 1e12
+	case "tib":
+		mult = 1 << 40
+	default:
+		return 0, fmt.Errorf("invalid size unit in %q (use B, KB, MB, GB or KiB, MiB, GiB)", s)
+	}
+	return int64(num * mult), nil
+}
+
+// parseMaxDownloadSize turns the --max-download-size flag into a byte limit,
+// falling back to defaultMaxDownloadSize when unset.
+func parseMaxDownloadSize(s string) (int64, error) {
+	if strings.TrimSpace(s) == "" {
+		return defaultMaxDownloadSize, nil
+	}
+	n, err := parseSize(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --max-download-size: %w", err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid --max-download-size %q: must be positive", s)
+	}
+	return n, nil
+}
+
+// humanBytes formats a byte count like "25.0 MiB".
+func humanBytes(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	v := float64(n)
+	i := -1
+	for v >= 1024 && i < len(units)-1 {
+		v /= 1024
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", v, units[i])
+}
 
 func httpGet(rawURL, token string, timeout time.Duration) (*http.Response, error) {
 	req, err := http.NewRequest("GET", rawURL, nil)
@@ -50,7 +128,10 @@ func httpGet(rawURL, token string, timeout time.Duration) (*http.Response, error
 	return resp, nil
 }
 
-func download(rawURL, token string) (string, string, string, error) {
+func download(rawURL, token string, maxSize int64) (string, string, string, error) {
+	if maxSize <= 0 {
+		maxSize = defaultMaxDownloadSize
+	}
 	resp, err := httpGet(rawURL, token, 10*time.Minute)
 	if err != nil {
 		return "", "", "", err
@@ -62,12 +143,12 @@ func download(rawURL, token string) (string, string, string, error) {
 	}
 	hs := sha256.New()
 	hm := md5.New()
-	lr := io.LimitReader(resp.Body, maxDownloadSize+1)
+	lr := io.LimitReader(resp.Body, maxSize+1)
 	n, err := io.Copy(io.MultiWriter(tmp, hs, hm), lr)
 	tmp.Close()
-	if n > maxDownloadSize {
+	if n > maxSize {
 		os.Remove(tmp.Name())
-		return "", "", "", fmt.Errorf("download exceeds 25 MB limit")
+		return "", "", "", fmt.Errorf("download exceeds %s limit; raise it with --max-download-size (e.g. --max-download-size=%s)", humanBytes(maxSize), humanBytes(maxSize*2))
 	}
 	if err != nil {
 		os.Remove(tmp.Name())

@@ -75,6 +75,8 @@ Install options:
   --pre-release      consider pre-releases when picking latest
   --sha256           print sha256 of downloaded asset
   --verify-sha256=H  verify download matches hex hash H
+  --max-download-size=SIZE  abort downloads larger than SIZE (default 25MiB;
+                          e.g. 50MB, 1GiB)
   --yes, -y          skip the install preview confirmation prompt
   --min-release-age=DUR  ignore releases newer than DUR (e.g. 30m, 3d, 72h);
                           like npm's minimum-release-age, this guards against
@@ -96,24 +98,28 @@ Environment:
   BINUP_GITHUB_TOKEN / GITHUB_TOKEN  GitHub auth token
   BINUP_BIN                          default install dir
   BINUP_MANIFEST / XDG_DATA_HOME     manifest path
+
+Downloads are capped at 25 MiB by default; raise the limit with
+--max-download-size (e.g. --max-download-size=200MiB).
 `
 
 type cliFlags struct {
-	cmd          string
-	tag          string
-	to           string
-	system       string
-	fileGlob     string
-	assets       []string
-	all          bool
-	downloadOnly bool
-	upgradeOnly  bool
-	source       bool
-	preRelease   bool
-	showHash     bool
-	verifySHA256 string
-	yes          bool
-	minAge       string
+	cmd             string
+	tag             string
+	to              string
+	system          string
+	fileGlob        string
+	assets          []string
+	all             bool
+	downloadOnly    bool
+	upgradeOnly     bool
+	source          bool
+	preRelease      bool
+	showHash        bool
+	verifySHA256    string
+	yes             bool
+	minAge          string
+	maxDownloadSize string
 }
 
 func main() {
@@ -153,6 +159,7 @@ func main() {
 	fs.BoolVar(&cf.yes, "yes", false, "skip confirmation prompt")
 	fs.BoolVar(&cf.yes, "y", false, "skip confirmation prompt (shorthand)")
 	fs.StringVar(&cf.minAge, "min-release-age", "", "ignore releases newer than this (e.g. 30m, 3d, 72h)")
+	fs.StringVar(&cf.maxDownloadSize, "max-download-size", "", "abort downloads larger than SIZE (e.g. 50MB, 1GiB)")
 	rest = reorderArgs(fs, rest)
 	if err := fs.Parse(rest); err != nil {
 		os.Exit(2)
@@ -171,6 +178,10 @@ func run(cf cliFlags, args []string) error {
 	if err != nil {
 		return err
 	}
+	maxDownloadSize, err := parseMaxDownloadSize(cf.maxDownloadSize)
+	if err != nil {
+		return err
+	}
 	switch cf.cmd {
 	case "install":
 		if len(args) == 0 {
@@ -182,7 +193,7 @@ func run(cf cliFlags, args []string) error {
 			AssetFilters: cf.assets, All: cf.all, DownloadOnly: cf.downloadOnly,
 			UpgradeOnly: cf.upgradeOnly, Source: cf.source, PreRelease: cf.preRelease,
 			ShowHash: cf.showHash, VerifySHA256: cf.verifySHA256,
-			Yes: cf.yes, MinAge: minAge,
+			Yes: cf.yes, MinAge: minAge, MaxDownloadSize: maxDownloadSize,
 		}
 		if isGitHubRepoURL(t) {
 			opts.Repo = stripGitHubURL(t)
@@ -198,7 +209,7 @@ func run(cf cliFlags, args []string) error {
 		}
 		return err
 	case "upgrade":
-		return runUpgrade(cf, args, minAge)
+		return runUpgrade(cf, args, minAge, maxDownloadSize)
 	case "list":
 		return runList()
 	case "outdated":
@@ -275,7 +286,7 @@ func stripGitHubURL(t string) string {
 	return t
 }
 
-func runUpgrade(cf cliFlags, args []string, minAge time.Duration) error {
+func runUpgrade(cf cliFlags, args []string, minAge time.Duration, maxDownloadSize int64) error {
 	m, err := loadManifest()
 	if err != nil {
 		return err
@@ -321,6 +332,7 @@ func runUpgrade(cf cliFlags, args []string, minAge time.Duration) error {
 			Repo: id, To: rec.Target, FileGlob: rec.FileGlob,
 			AssetFilters: rec.Filters,
 			PreRelease:   cf.preRelease, Yes: cf.yes, MinAge: minAge,
+			MaxDownloadSize: maxDownloadSize,
 		}
 		if _, err := runInstall(opts); err != nil {
 			if errors.Is(err, errAborted) {

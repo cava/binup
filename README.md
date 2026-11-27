@@ -16,4 +16,6 @@ Supports `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.zip`, single compressed files (`.gz
 
 Use `--min-release-age=DUR` (e.g. `30m`, `72h`, `3d`) to ignore releases published more recently than that, guarding against just-published or compromised releases — similar to npm's `minimum-release-age`.
 
+Downloads are capped at 25 MiB by default. If an asset is larger, raise the limit with `--max-download-size=SIZE` (e.g. `--max-download-size=200MiB`); accept lengths like `B`, `KB`/`KiB`, `MB`/`MiB`, `GB`/`GiB`.
+
 binup keeps a manifest of installed tools at `~/.local/share/binup/manifest.json` (override with `$BINUP_MANIFEST` or `$XDG_DATA_HOME`). Reads GitHub tokens from `$BINUP_GITHUB_TOKEN` or `$GITHUB_TOKEN`.
