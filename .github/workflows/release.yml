@@ -26,14 +26,18 @@ jobs:
         set -euo pipefail
         version="${GITHUB_REF_NAME}"
         mkdir -p dist
+        builddir="$(mktemp -d)"
+        trap 'rm -rf "${builddir}"' EXIT
         for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
           os="${target%/*}"
           arch="${target#*/}"
           name="binup-${os}-${arch}"
           echo "building ${name} (${version})"
+          mkdir -p "${builddir}/${name}"
           CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" \
-            go build -trimpath -ldflags "-s -w -X main.buildVersion=${version}" -o "dist/${name}" .
-          (cd dist && sha256sum "${name}" > "${name}.sha256")
+            go build -trimpath -ldflags "-s -w -X main.buildVersion=${version}" -o "${builddir}/${name}/binup" .
+          tar -C "${builddir}/${name}" -czf "dist/${name}.tar.gz" binup
+          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
         done
         ls -l dist
 
